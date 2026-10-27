@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#c2456b">
+  <title>Việc Cưới</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app" aria-live="polite"></main>
+  <nav id="tabs" aria-label="Điều hướng">
+    <button data-tab="home">🏠<span>Tổng quan</span></button>
+    <button data-tab="events">📋<span>Sự kiện</span></button>
+    <button data-tab="calendar">📅<span>Lịch</span></button>
+    <button data-tab="music">🎵<span>Nhạc cưới</span></button>
+    <button data-tab="budget">💰<span>Ngân sách</span></button>
+    <button data-tab="settings">⚙️<span>Cài đặt</span></button>
+  </nav>
+  <div id="toast" role="status"></div>
+  <dialog id="dlg"></dialog>
+  <input type="file" id="importFile" accept="application/json" hidden>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
