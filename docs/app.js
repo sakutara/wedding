@@ -7,6 +7,7 @@
   var tab = 'home';
   var openEv = {};   // id sự kiện đang mở
   var openTask = {}; // id việc đang mở rộng
+  var openCe = {};   // id sự kiện lịch trình đang mở rộng
   var toastTimer = null;
   var calY = new Date().getFullYear();
   var calM = new Date().getMonth(); // 0-11, tháng đang xem trên lịch
@@ -15,11 +16,12 @@
 
   // ---------- dữ liệu ----------
   function uid() { return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4); }
-  function empty() { return { settings: { weddingDate: '', names: '' }, events: [], budget: { total: 0, items: [] }, music: { items: [] } }; }
+  function empty() { return { settings: { weddingDate: '', names: '' }, events: [], budget: { total: 0, items: [] }, music: { items: [] }, calEvents: [] }; }
   function normalize(s) {
     s.settings = s.settings || { weddingDate: '', names: '' };
     s.budget = s.budget || { total: 0, items: [] };
     s.music = s.music || { items: [] };
+    s.calEvents = s.calEvents || [];
     return s;
   }
   function load() {
@@ -153,7 +155,7 @@
       '<div class="card"><div class="muted">Đã trả / cọc</div><b>' + money(paid) + '</b></div>' +
       '<div class="card"><div class="muted">Còn phải trả</div><b>' + money(left) + '</b></div></div>';
     if (B.total) h += '<div class="alert' + (over ? '' : ' ok') + '">' + (over ? '⚠️ Vượt ngân sách ' + money(tot - B.total) : '👍 Còn trong ngân sách ' + money(B.total - tot)) + '</div>';
-    h += '<div class="acts" style="margin-top:14px"><button class="btn pri" data-a="bdadd">+ Thêm khoản chi</button></div>';
+    h += '<div class="acts" style="margin-top:14px"><button class="btn pri" data-a="bdadd">+ Thêm khoản chi</button><button class="btn" data-a="bdxlsx">⬇ Xuất Excel</button></div>';
     if (!items.length) h += '<div class="empty">Chưa có khoản chi nào. Bấm “Thêm khoản chi” để bắt đầu (ví dụ: nhà hàng, studio, váy cưới).</div>';
     // nhóm theo sự kiện
     var groups = {};
@@ -333,8 +335,13 @@
     d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // lùi về thứ Hai
     return d;
   }
+  function ceByDay() {
+    var map = {};
+    state.calEvents.forEach(function (ce) { (map[ce.date] = map[ce.date] || []).push(ce); });
+    return map;
+  }
   function renderCalendar() {
-    var map = dueEntries(), today = todayStr();
+    var map = dueEntries(), ceMap = ceByDay(), today = todayStr();
     var label = (calM + 1) + '/' + calY;
     var h = '<h1>Lịch</h1>' +
       '<div class="calnav"><button class="btn" data-a="calprev" aria-label="Tháng trước">‹</button>' +
@@ -344,29 +351,38 @@
       '<div class="calgrid">' + WD_LABELS.map(function (w) { return '<div class="wd">' + w + '</div>'; }).join('');
     var cur = calGridStart(calY, calM);
     for (var i = 0; i < 42; i++) {
-      var ds = ymd(cur), entries = map[ds] || [];
-      var done = entries.filter(function (x) { return x.sub ? x.sub.done : x.t.done; }).length;
-      var dots = entries.slice(0, 4).map(function (x) {
+      var ds = ymd(cur), entries = map[ds] || [], ceList = ceMap[ds] || [];
+      var dotItems = ceList.map(function () { return ''; }).concat(entries.map(function (x) {
         var isDone = x.sub ? x.sub.done : x.t.done;
-        var cls = isDone ? 'done' : (ds < today ? 'late' : (ds === today ? 'now' : ''));
-        return '<i class="' + cls + '"></i>';
-      }).join('');
+        return isDone ? 'done' : (ds < today ? 'late' : (ds === today ? 'now' : ''));
+      }));
+      var total = dotItems.length;
+      var dots = dotItems.slice(0, 4).map(function (cls) { return '<i class="' + cls + '"></i>'; }).join('');
       h += '<button class="calday' + (cur.getMonth() !== calM ? ' out' : '') + (ds === today ? ' today' : '') +
         (ds === selDay ? ' sel' : '') + '" data-a="calday" data-day="' + ds + '">' +
         '<span class="dnum">' + cur.getDate() + '</span>' +
-        (ds === wd() ? '<span class="wedmark">💍</span>' : (entries.length ? '<span class="caldots">' + dots + (entries.length > 4 ? '<span class="more">+' + (entries.length - 4) + '</span>' : '') + '</span>' : '')) +
+        (ds === wd() ? '<span class="wedmark">💍</span>' : (total ? '<span class="caldots">' + dots + (total > 4 ? '<span class="more">+' + (total - 4) + '</span>' : '') + '</span>' : '')) +
         '</button>';
       cur.setDate(cur.getDate() + 1);
     }
     h += '</div>';
-    var day = selDay || today, dayEntries = (map[day] || []).slice().sort(function (a, b) {
+    var day = selDay || today;
+    var dayEntries = (map[day] || []).slice().sort(function (a, b) {
       return (a.sub ? a.sub.title : a.t.title).localeCompare(b.sub ? b.sub.title : b.t.title);
+    });
+    var ceDay = (ceMap[day] || []).slice().sort(function (a, b) {
+      if (!a.time && !b.time) return a.title.localeCompare(b.title);
+      if (!a.time) return 1; if (!b.time) return -1;
+      return a.time < b.time ? -1 : a.time > b.time ? 1 : 0;
     });
     h += '<h2>📅 ' + fmt(day) + (day === today ? ' <span class="muted">(Hôm nay)</span>' : '') +
       (day === wd() ? ' <span class="muted">💍 Ngày cưới</span>' : '') + '</h2>';
-    h += '<div class="card"><ul class="tasks">' + dayEntries.map(calEntryRow).join('') + '</ul>';
+    h += '<h2 style="margin-top:14px">🕒 Lịch trình</h2><div class="card"><ul class="tasks">' + ceDay.map(ceRow).join('') + '</ul>';
+    if (!ceDay.length) h += '<div class="empty">Chưa có sự kiện nào vào ngày này.</div>';
+    h += '<div class="acts"><button class="btn pri" data-a="ceadd" data-day="' + day + '">+ Thêm sự kiện</button></div></div>';
+    h += '<h2>✅ Việc cần làm</h2><div class="card"><ul class="tasks">' + dayEntries.map(calEntryRow).join('') + '</ul>';
     if (!dayEntries.length) h += '<div class="empty">Chưa có việc nào vào ngày này.</div>';
-    h += '<div class="acts"><button class="btn pri" data-a="caladd" data-day="' + day + '">+ Thêm việc cho ngày này</button></div></div>';
+    h += '<div class="acts"><button class="btn" data-a="caladd" data-day="' + day + '">+ Thêm việc cho ngày này</button></div></div>';
     return h;
   }
   function calEntryRow(x) {
@@ -376,6 +392,30 @@
       '<button class="chk" ' + d + ' data-a="togglesub" aria-label="Đánh dấu xong">✓</button>' +
       '<div class="tbody"><div class="ttl">' + esc(s.title) + '</div><div class="meta">' +
       '<span>' + esc(x.ev.emoji) + ' ' + esc(x.ev.title) + ' › ' + esc(x.t.title) + '</span></div></div></li>';
+  }
+  function ceRow(ce) {
+    var d = 'data-c="' + ce.id + '"';
+    var h = '<li class="task"><div class="tbody" data-a="ceopen" ' + d + '><div class="ttl">' + esc(ce.title) + '</div>' +
+      '<div class="meta">' + (ce.time ? '<span class="chip now">🕒 ' + esc(ce.time) + '</span>' : '<span class="chip plain">Cả ngày</span>') + '</div></div></li>';
+    if (openCe[ce.id]) {
+      h += '<div class="detail">' + (ce.note ? '<div class="note">' + esc(ce.note) + '</div>' : '') +
+        '<div class="acts"><button class="btn" data-a="ceedit" ' + d + '>✎ Sửa</button>' +
+        '<button class="btn danger" data-a="cedel" ' + d + '>🗑 Xoá</button></div></div>';
+    }
+    return h;
+  }
+  function editCe(id, day) {
+    var ce = id ? state.calEvents.find(function (x) { return x.id === id; }) : { title: '', time: '', note: '', date: day };
+    dialog('<b>' + (id ? 'Sửa sự kiện' : 'Thêm sự kiện') + ' ngày ' + fmt(ce.date) + '</b>' +
+      '<label>Tên sự kiện</label><input type="text" name="title" required value="' + esc(ce.title) + '" autocomplete="off">' +
+      '<label>Giờ (không bắt buộc)</label><input type="time" name="time" value="' + esc(ce.time) + '">' +
+      '<label>Ghi chú</label><textarea name="note" rows="2">' + esc(ce.note) + '</textarea>', function (d) {
+      if (!d.title) return;
+      mutate(function () {
+        if (id) { ce.title = d.title; ce.time = d.time; ce.note = d.note; }
+        else { state.calEvents.push({ id: uid(), date: day, title: d.title, time: d.time, note: d.note }); openCe[state.calEvents[state.calEvents.length - 1].id] = true; }
+      });
+    });
   }
   function addTaskOnDay(day) {
     var evs = state.events.filter(function (e) { return !e.hidden; });
@@ -586,15 +626,103 @@
       var left = cost(b) - b.paid;
       if (b.payDue && left > 0) { ev(b.id, b.payDue, '💰 Trả ' + b.title + ': ' + money(left), b.note, true); n++; }
     });
+    state.calEvents.forEach(function (ce) {
+      if (ce.time) {
+        var d = ce.date.replace(/-/g, ''), t = ce.time.replace(':', '') + '00';
+        L.push('BEGIN:VEVENT', 'UID:' + ce.id + '@vieccuoi', 'DTSTAMP:' + stamp, 'DTSTART:' + d + 'T' + t, 'SUMMARY:' + icsEsc(ce.title));
+        if (ce.note) L.push('DESCRIPTION:' + icsEsc(ce.note));
+        L.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(ce.title), 'TRIGGER:-PT30M', 'END:VALARM', 'END:VEVENT');
+      } else ev(ce.id, ce.date, ce.title, ce.note, true);
+      n++;
+    });
     L.push('END:VCALENDAR');
     download('viec-cuoi.ics', L.join('\r\n'), 'text/calendar');
     toast('Đã xuất ' + n + ' việc ra lịch');
   }
 
+  // ---------- xuất Excel (.xlsx, không cần thư viện) ----------
+  var CRC_T = (function () {
+    var t = [], c, n, k;
+    for (n = 0; n < 256; n++) { c = n; for (k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+  })();
+  function crc32(u8) { var c = 0xFFFFFFFF; for (var i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function zipStore(files) {
+    var enc = new TextEncoder(), parts = [], cd = [], off = 0;
+    function u16(v) { return [v & 255, (v >>> 8) & 255]; }
+    function u32(v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; }
+    files.forEach(function (f) {
+      var name = enc.encode(f.name), data = enc.encode(f.data), crc = crc32(data);
+      var lh = [0x50, 0x4b, 3, 4].concat(u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0));
+      parts.push(new Uint8Array(lh), name, data);
+      cd.push(new Uint8Array([0x50, 0x4b, 1, 2].concat(u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off))), name);
+      off += lh.length + name.length + data.length;
+    });
+    var cdSize = 0; cd.forEach(function (x) { cdSize += x.length; });
+    var end = new Uint8Array([0x50, 0x4b, 5, 6, 0, 0, 0, 0].concat(u16(files.length), u16(files.length), u32(cdSize), u32(off), u16(0)));
+    return new Blob(parts.concat(cd, [end]), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+  function xmlEsc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''); }
+  function exportXlsx() {
+    var items = state.budget.items;
+    if (!items.length) { toast('Chưa có khoản chi nào để xuất'); return; }
+    var rows = [], r;
+    function T(ref, v, st) { return '<c r="' + ref + '"' + (st ? ' s="' + st + '"' : '') + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>'; }
+    function N(ref, v, st) { return '<c r="' + ref + '" s="' + (st || 2) + '"><v>' + (Number(v) || 0) + '</v></c>'; }
+    function F(ref, f, v, st) { return '<c r="' + ref + '" s="' + (st || 2) + '"><f>' + f + '</f><v>' + (Number(v) || 0) + '</v></c>'; }
+    var heads = ['Khoản chi', 'Sự kiện', 'Dự kiến (đ)', 'Thực tế (đ)', 'Chi phí hiện tại (đ)', 'Đã trả/cọc (đ)', 'Còn lại (đ)', 'Hạn trả', 'Ghi chú'];
+    rows.push('<row r="1">' + heads.map(function (h, i) { return T('ABCDEFGHI'.charAt(i) + '1', h, 1); }).join('') + '</row>');
+    var sEst = 0, sCost = 0, sPaid = 0, sLeft = 0;
+    items.forEach(function (b, i) {
+      r = i + 2;
+      var ev = b.eventId && findEv(b.eventId), c = cost(b), left = Math.max(0, c - b.paid);
+      sEst += b.est; sCost += c; sPaid += b.paid; sLeft += left;
+      rows.push('<row r="' + r + '">' + T('A' + r, b.title) + T('B' + r, ev ? ev.title : 'Khác') + N('C' + r, b.est) + N('D' + r, b.actual) +
+        F('E' + r, 'IF(D' + r + '&gt;0,D' + r + ',C' + r + ')', c) + N('F' + r, b.paid) + F('G' + r, 'MAX(0,E' + r + '-F' + r + ')', left) +
+        T('H' + r, b.payDue ? fmt(b.payDue) : '') + T('I' + r, b.note || '') + '</row>');
+    });
+    var last = items.length + 1, t = last + 1;
+    rows.push('<row r="' + t + '">' + T('A' + t, 'TỔNG CỘNG', 4) + T('B' + t, '', 4) +
+      ['C', 'D', 'E', 'F', 'G'].map(function (col, i) { return F(col + t, 'SUM(' + col + '2:' + col + last + ')', [sEst, items.reduce(function (a, b) { return a + b.actual; }, 0), sCost, sPaid, sLeft][i], 3); }).join('') + '</row>');
+    var q = t + 2, total = state.budget.total || 0;
+    rows.push('<row r="' + q + '">' + T('A' + q, 'Ngân sách đã đặt', 4) + N('C' + q, total, 3) + '</row>');
+    rows.push('<row r="' + (q + 1) + '">' + T('A' + (q + 1), total && sCost > total ? 'Vượt ngân sách' : 'Còn trong ngân sách', 4) + F('C' + (q + 1), 'ABS(C' + q + '-E' + t + ')', Math.abs(total - sCost), 3) + '</row>');
+
+    var X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    var NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+    var cols = [34, 24, 16, 16, 20, 16, 16, 14, 40].map(function (w, i) { return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>'; }).join('');
+    var sheet = X + '<worksheet ' + NS + '><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+      '<cols>' + cols + '</cols><sheetData>' + rows.join('') + '</sheetData></worksheet>';
+    var styles = X + '<styleSheet ' + NS + '><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0"/></numFmts>' +
+      '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
+      '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFBE4EC"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+      '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      '<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+      '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+      '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+      '<xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>' +
+      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs></styleSheet>';
+    var files = [
+      { name: '[Content_Types].xml', data: X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { name: '_rels/.rels', data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: 'xl/workbook.xml', data: X + '<workbook ' + NS + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Ngân sách" sheetId="1" r:id="rId1"/></sheets></workbook>' },
+      { name: 'xl/_rels/workbook.xml.rels', data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { name: 'xl/styles.xml', data: styles },
+      { name: 'xl/worksheets/sheet1.xml', data: sheet }
+    ];
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(zipStore(files));
+    a.download = 'ngan-sach-dam-cuoi-' + todayStr() + '.xlsx';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    toast('Đã xuất ' + items.length + ' khoản chi ra Excel');
+  }
+
   // ---------- sự kiện giao diện ----------
   function ctx(el) {
     var b = el.closest('[data-a]');
-    return b ? { a: b.dataset.a, e: b.dataset.e, t: b.dataset.t, s: b.dataset.s, b: b.dataset.b, day: b.dataset.day, m: b.dataset.m, el: b } : null;
+    return b ? { a: b.dataset.a, e: b.dataset.e, t: b.dataset.t, s: b.dataset.s, b: b.dataset.b, day: b.dataset.day, m: b.dataset.m, c: b.dataset.c, el: b } : null;
   }
   app.addEventListener('click', function (ev) {
     var c = ctx(ev.target);
@@ -640,6 +768,7 @@
         mutate(function () { var n = applyTemplate(); toast(n ? 'Đã thêm ' + n + ' việc mẫu' : 'Không có việc mẫu nào thiếu'); }); break;
       case 'bdopen': openTask[c.b] = !openTask[c.b]; render(); break;
       case 'bdadd': editBudget(null); break;
+      case 'bdxlsx': exportXlsx(); break;
       case 'bdedit': editBudget(c.b); break;
       case 'bddel':
         mutate(function () { state.budget.items = state.budget.items.filter(function (x) { return x.id !== c.b; }); }, 'Đã xoá khoản chi'); break;
@@ -653,6 +782,11 @@
       case 'caltoday': var n = new Date(); calY = n.getFullYear(); calM = n.getMonth(); selDay = todayStr(); render(); break;
       case 'calday': selDay = c.day; calY = parse(c.day).getFullYear(); calM = parse(c.day).getMonth(); render(); break;
       case 'caladd': addTaskOnDay(c.day); break;
+      case 'ceadd': editCe(null, c.day); break;
+      case 'ceedit': editCe(c.c, null); break;
+      case 'ceopen': openCe[c.c] = !openCe[c.c]; render(); break;
+      case 'cedel':
+        mutate(function () { state.calEvents = state.calEvents.filter(function (x) { return x.id !== c.c; }); }, 'Đã xoá sự kiện'); break;
       case 'mopen': openTask[c.m] = !openTask[c.m]; render(); break;
       case 'madd': editMusic(null); break;
       case 'medit': editMusic(c.m); break;
